@@ -1,0 +1,59 @@
+name: Build portable sparse-pruning wheel
+
+on:
+  push:
+    branches: [build/sparse-wheels]
+  workflow_dispatch:
+    inputs:
+      build:
+        description: cibuildwheel build selector
+        required: true
+        default: 'cp311-* cp312-* cp313-* cp314-* cp314t-*'
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install wheel builder
+        run: python -m pip install --require-hashes --no-dependencies -r .github/workflows/requirements/cibuildwheel.txt
+      - name: Build and test wheels
+        working-directory: python
+        run: |
+          python build_sdist.py
+          python -m cibuildwheel --output-dir wheelhouse
+        env:
+          CIBW_BUILD: ${{ inputs.build || 'cp311-* cp312-* cp313-* cp314-* cp314t-*' }}
+          CIBW_ENABLE: cpython-freethreading
+          CIBW_ARCHS_LINUX: x86_64
+          CIBW_ARCHS_MACOS: arm64
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_ENVIRONMENT: 'CMAKE_BUILD_PARALLEL_LEVEL=4'
+          CIBW_BEFORE_ALL_LINUX: 'sh build_bundled.sh'
+          CIBW_BEFORE_ALL_MACOS: 'sh build_bundled.sh'
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+      - name: Inspect Linux compatibility
+        if: runner.os == 'Linux'
+        working-directory: python
+        run: |
+          python -m pip install auditwheel
+          for wheel in wheelhouse/*.whl; do python -m auditwheel show "$wheel"; done
+      - name: Checksum wheels
+        working-directory: python
+        run: shasum -a 256 wheelhouse/*.whl > wheelhouse/SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sparse-pruning-${{ matrix.os }}
+          path: python/wheelhouse/*
